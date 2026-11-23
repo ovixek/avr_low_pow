@@ -59,7 +59,7 @@ extern "C" {
  *   - 64 = hardware 6-bit fractional multiplier
  *   - 16 = oversampling ratio (16 clock cycles per bit)
  *   - +0.5 = rounding up for integer truncation
- * For 115200 baud: BAUD = (64 * 24000000) / (16 * 115200) + 0.5 = ~833.8 -> 833 (0x0341)
+ * For 115200 baud: BAUD = (64 * 24000000) / (16 * 115200) + 0.5 = ~833.3 -> 833 (0x0341)
  */
 #define USART1_BAUD_RATE(BAUD_RATE) (((float)24000000 * 64 / (16 * (float)BAUD_RATE)) + 0.5)
 
@@ -105,7 +105,8 @@ void Terminal_EnableTx(void);
 
 /**
  * Terminal_Disable()
- * Disables both receiver and transmitter to save power.
+ * Flushes queued data and disables receiver and transmitter.
+ * Call with global interrupts enabled.
  */
 void Terminal_Disable(void);
 

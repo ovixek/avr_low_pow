@@ -38,10 +38,6 @@
  *   - 115200 baud, 8 data bits, no parity, 1 stop bit (8N1).
  *   - Circular ring buffer (FIFO) for both transmit and receive.
  *   - GCC standard I/O (stdio) stream binding: redirects printf() to USART1.
- *   - Sleep Mode Wakeup Support:
- *     - Bit 4 RXSIE (Receiver Start Frame Interrupt Enable) in USART1.CTRLA
- *       allows an incoming start bit on the RX line to wake up the MCU from
- *       Standby sleep mode!
  * ============================================================================
  */
 
@@ -95,6 +91,7 @@ static uint8_t          Terminal_txbuf[Terminal_TX_BUFFER_SIZE];
 static volatile uint8_t Terminal_tx_head;     /* Write index (updated by Terminal_Write) */
 static volatile uint8_t Terminal_tx_tail;     /* Read index (updated by TX ISR) */
 static volatile uint8_t Terminal_tx_elements; /* Number of bytes queued for transmission */
+static bool Terminal_tx_pending; /* At least one byte needs to finish on the wire */
 
 /* Function pointers for custom runtime ISR callbacks */
 void (*Terminal_rx_isr_cb)(void) = &Terminal_DefaultRxIsrCb;
@@ -154,6 +151,8 @@ void Terminal_DefaultTxIsrCb(void)
 
         /* Write byte to hardware TXDATAL register; begins serial transmission */
         USART1.TXDATAL = Terminal_txbuf[tmptail];
+        /* TXCIF is write-one-to-clear and is not cleared by writing TXDATAL. */
+        USART1.STATUS = USART_TXCIF_bm;
         
         /* Decrement pending elements counter */
         Terminal_tx_elements--;
@@ -255,7 +254,7 @@ bool Terminal_IsRxReady()
  */
 bool Terminal_IsTxBusy()
 {
-    return (!(USART1.STATUS & USART_TXCIF_bm));
+    return !Terminal_IsTxDone();
 }
 
 /**
@@ -264,7 +263,7 @@ bool Terminal_IsTxBusy()
  */
 bool Terminal_IsTxDone()
 {
-    return (USART1.STATUS & USART_TXCIF_bm);
+    return (Terminal_tx_elements == 0 && (USART1.STATUS & USART_TXCIF_bm));
 }
 
 /**
@@ -325,6 +324,7 @@ void Terminal_Write(const uint8_t data)
     /* Atomically increment elements count */
     ENTER_CRITICAL(W);
     Terminal_tx_elements++;
+    Terminal_tx_pending = true;
     EXIT_CRITICAL(W);
 
     /* Enable DRE interrupt: triggers ISR(USART1_DRE_vect) to begin sending */
@@ -335,7 +335,7 @@ void Terminal_Write(const uint8_t data)
  * Terminal_Initialize()
  * Configures the USART1 peripheral:
  *   - Calculates and writes 16-bit fractional baud rate register for 115200 baud.
- *   - CTRLA: Enables RX complete, TX complete, and Receiver Start Frame interrupt (RXSIE).
+ *   - CTRLA: Enables RX complete interrupts; TX complete is polled.
  *   - CTRLB: Enables Receiver (RXEN) and Transmitter (TXEN) in normal speed mode.
  *   - CTRLC: Sets asynchronous mode, 8-bit character size, no parity, 1 stop bit.
  *   - Initializes FIFO indices to 0.
@@ -347,16 +347,10 @@ void Terminal_Initialize()
     USART1.BAUD = (uint16_t)USART1_BAUD_RATE(115200);
 	
     /*
-     * USART1.CTRLA - Control A Register: 0xD0 = 0b11010000
-     * - Bit 7 RXCIE = 1 : Receive Complete Interrupt Enable.
-     * - Bit 6 TXCIE = 1 : Transmit Complete Interrupt Enable.
-     * - Bit 5 DREIE = 0 : Data Register Empty Interrupt disabled until bytes are queued.
-     * - Bit 4 RXSIE = 1 : Receiver Start Frame Interrupt Enable.
-     *                     Enables detection of incoming start bit to wake the device
-     *                     from Standby sleep mode!
-     * - Bits [3:0]      : RS485 / loopback disabled.
+     * Receive complete interrupts are enabled. DRE interrupts are enabled when
+     * data is queued. TX complete is polled so it remains set until the next byte.
      */
-    USART1.CTRLA = 0xD0;
+    USART1.CTRLA = USART_RXCIE_bm;
 	
     /*
      * USART1.CTRLB - Control B Register: 0xC0 = 0b11000000
@@ -396,6 +390,7 @@ void Terminal_Initialize()
     Terminal_tx_tail     = x;
     Terminal_tx_head     = x;
     Terminal_tx_elements = x;
+    Terminal_tx_pending = false;
 
 #if defined(__GNUC__)
     /* Redirect standard output stream (stdout) to USART1 terminal driver */
@@ -432,10 +427,17 @@ void Terminal_EnableTx()
 
 /**
  * Terminal_Disable()
- * Disables both receiver and transmitter to conserve power.
+ * Waits for queued data and the final stop bit, then disables receiver and transmitter.
+ * Global interrupts must be enabled while this function is called.
  */
 void Terminal_Disable()
 {
+    if (Terminal_tx_pending)
+    {
+        while (Terminal_tx_elements != 0 || !(USART1.STATUS & USART_TXCIF_bm))
+            ;
+        Terminal_tx_pending = false;
+    }
     USART1.CTRLB &= ~(USART_RXEN_bm | USART_TXEN_bm);
 }
 

@@ -67,7 +67,7 @@ void PIN_MANAGER_Initialize(void)
     /* 3. Direction Registers */
     PORTA.DIR = PIN4_bm | PIN5_bm | PIN7_bm; /* PA4 (PH), PA5 (EN), PA7 (AC0 Out) */
     PORTB.DIR = 0x00;                        /* PB2 is input */
-    PORTC.DIR = 0x7D;          /* PC4 (TXD output), PC6 (LED output) */
+    PORTC.DIR = PIN2_bm | PIN3_bm | PIN4_bm | PIN6_bm; /* PC4 TX output; PC5 RX input */
     PORTD.DIR = 0x8;
     PORTE.DIR = 0xFF;
     PORTF.DIR = 0xFF;
@@ -80,11 +80,11 @@ void PIN_MANAGER_Initialize(void)
 
     /* PB2: Asynchronous Wake-Up Pin (Pull-up + Falling-edge interrupt) */
     PORTB.DIRCLR   = PIN2_bm;
-    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_FALLING_gc;
+    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
 
     /* PC0 & PC1: Limit switches (Pull-down / Pull-off, both-edge sensing handled in Limit_switch()) */
-    PORTC.PIN0CTRL = PORT_ISC_BOTHEDGES_gc;
-    PORTC.PIN1CTRL = PORT_ISC_BOTHEDGES_gc;
+    PORTC.PIN0CTRL = PORT_ISC_INTDISABLE_gc;
+    PORTC.PIN1CTRL = PORT_ISC_INTDISABLE_gc;
 
     /* PC4: USART1 TXD, PC5: USART1 RXD */
     PORTC.PIN4CTRL = 0x00;
@@ -94,7 +94,7 @@ void PIN_MANAGER_Initialize(void)
     PORTC.PIN6CTRL = 0x00;
 
     /* PC7: User SW0 Button (Pull-up + both-edge interrupt) */
-    PORTC.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
+    PORTC.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
 
     /* PD2: AC0 Positive Input (Disable digital input buffer for analog pin to eliminate noise/leakage) */
    PORTD.PIN2CTRL = 0x4;
@@ -106,7 +106,7 @@ void PIN_MANAGER_Initialize(void)
     PORTMUX.SPIROUTEA   = 0x00;
     PORTMUX.TCAROUTEA   = 0x00; /* PA0 WO0 removed */
     PORTMUX.TCBROUTEA   = 0x00;
-    PORTMUX.TCDROUTEA   = 0x00;
+    PORTMUX.TCDROUTEA   = PORTMUX_TCD0_DEFAULT_gc; /* WOB on PA5 */
     PORTMUX.TWIROUTEA   = 0x00;
     PORTMUX.USARTROUTEA = PORTMUX_USART1_ALT1_gc; /* Route USART1 to PC4 (TXD) and PC5 (RXD) */
     PORTMUX.USARTROUTEB = 0x00;
