@@ -42,6 +42,7 @@ void SYSTEM_Initialize(void)
     AC0_Initialize();
     CCL_Initialize();
     PIN_MANAGER_Initialize();
+     Terminal_Initialize();
     DAC0_Initialize();
     TCD0_Initialize();
     VREF_Initialize();

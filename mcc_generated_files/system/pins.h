@@ -34,6 +34,47 @@ extern "C" {
 
 /*
  * ============================================================================
+ * PA2 Sleep & Wakeup Observation Pin
+ * High = In Power-Down Sleep / Powering Down
+ * Low  = Awake & Operating
+ * ============================================================================
+ */
+#define SLEEP_OBSERVE_PIN_bm             PIN2_bm
+#define SLEEP_OBSERVE_HIGH()             do { PORTA.OUTSET = PIN2_bm; } while(0)
+#define SLEEP_OBSERVE_LOW()              do { PORTA.OUTCLR = PIN2_bm; } while(0)
+#define SLEEP_OBSERVE_SetDigitalOutput() do { PORTA.DIRSET = PIN2_bm; } while(0)
+
+/*
+ * ============================================================================
+ * PA7 AC0 Hardware Output Pin
+ * Live comparator state: HIGH = Overcurrent (PD2 > DACREF), LOW = Normal (PD2 < DACREF)
+ * ============================================================================
+ */
+#define AC0_OUT_PIN_bm                   PIN7_bm
+
+/*
+ * ============================================================================
+ * USART1 Serial Communication Pins (ALT1 Pin Routing)
+ * PC4: TXD (Digital Output, Idle HIGH)
+ * PC5: RXD (Digital Input with internal pull-up)
+ * Note: PC0 and PC1 are completely removed from UART and reserved for limit switches.
+ * ============================================================================
+ */
+#define USART1_TXD_PIN_bm                PIN4_bm
+#define USART1_RXD_PIN_bm                PIN5_bm
+
+/*
+ * ============================================================================
+ * Limit Switch Input Pins
+ * PC0: Limit Switch 1 (Digital Input -> EVSYS CH2 -> CCL LUT1 Event Input A)
+ * PC1: Limit Switch 2 (Digital Input -> EVSYS CH3 -> CCL LUT1 Event Input B)
+ * ============================================================================
+ */
+#define LIMIT_SW1_PIN_bm                 PIN0_bm
+#define LIMIT_SW2_PIN_bm                 PIN1_bm
+
+/*
+ * ============================================================================
  * PB2 Asynchronous Wake-Up Pin
  * ============================================================================
  */

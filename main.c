@@ -18,7 +18,7 @@
  *    - Asynchronous Wake-Up: Pin PB2 is configured with internal pull-up and falling-edge sense.
  *      Pulling PB2 to GND asynchronously wakes the CPU from deep Power-Down mode.
  *    - Wake-Up Sequence: Turns ON the onboard LED (PC6), sends "GOOD MORNING\r\n" over UART1,
- *      restores VREF, DAC0, AC0, CCL, EVSYS, and Timers, calibrates current threshold, and starts
+ *      restores VREF, DAC0, AC0, CCL, EVSYS, and Timers, sets the current threshold, and starts
  *      the motor in Forward direction.
  *    - Active Stall Protection & Return to Sleep: When a continuous 200 ms stall overcurrent is
  *      detected by the CIP pipeline, TCD0 hardware cuts PWM instantly, the TCB0 interrupt signals
@@ -43,7 +43,7 @@
  */
 
 #include "mcc_generated_files/system/system.h"
-#include "usart1.h"
+#include "usart0.h"
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
@@ -83,9 +83,14 @@ typedef enum {
     DIR_REVERSE = 1  /* Toggled state on PC7 press: Hand Close (PA4 = HIGH) */
 } motor_dir_t;
 
-static volatile motor_dir_t current_direction   = DIR_FORWARD;
+static volatile motor_dir_t current_direction    = DIR_FORWARD;
 static volatile bool        pb2_wakeup_requested = false;
 static volatile bool        stall_detected       = false;
+
+/* AC0 real-time trigger telemetry variables */
+static volatile bool        ac0_state_change     = false;
+static volatile uint8_t     ac0_last_state       = 0;
+static volatile uint32_t    ac0_trigger_count    = 0;
 
 /* =================================================================================================
  * FUNCTION PROTOTYPES
@@ -126,6 +131,10 @@ int main(void)
 {
     /* 1. Base System Hardware Initialization */
     SYSTEM_Initialize();
+    Terminal_Initialize();
+
+    /* Assert PA2 HIGH at startup before entering initial Power-Down sleep */
+    SLEEP_OBSERVE_HIGH();
 
     /* 2. Completely disable BOD and WDT for minimum power consumption */
     BOD_Disable();
@@ -138,27 +147,27 @@ int main(void)
     /* 4. Global Interrupts Enable */
     sei();
 
-    /* 5. Startup / Reset -> Immediate Power-Down Mode:
-     *    Sends "GOOD NIGHT\r\n" on PC4/PC5, turns off LED PC6, shuts down peripherals,
-     *    and enters Power-Down sleep until pin PB2 triggers. */
-    System_Enter_PowerDown_Sleep();
-
-    /* 6. Main Super-Loop */
+    /* Every cycle sleeps until PB2, then runs until a stall or limit trip. */
     while (1)
     {
-        /* Asynchronous wake-up triggered by PB2 falling edge */
-        if (pb2_wakeup_requested)
+        System_Enter_PowerDown_Sleep();
+        System_Wakeup_And_Restore();
+
+        while (!stall_detected)
         {
-            pb2_wakeup_requested = false;
-            System_Wakeup_And_Restore();
+            if (ac0_state_change)
+            {
+                ac0_state_change = false;
+                printf("[AC0 EVENT] Triggers: %lu | Live State: %s (PA7=%d)\r\n",
+                       ac0_trigger_count,
+                       ac0_last_state ? "HIGH (Overcurrent)" : "LOW (Normal)",
+                       ac0_last_state);
+                _delay_ms(10); /* Rate limit \ output */
+            }
         }
 
-        /* 200 ms continuous overcurrent stall detected by CIP pipeline and limit switch press*/
-        if (stall_detected)
-        {
-            stall_detected = false;
-            System_Enter_PowerDown_Sleep();
-        }
+        /* Stall or Limit trip occurred: report final AC0 trigger count and status */
+        printf("[STALL/TRIP] Motor Stopped! Total AC0 Triggers: %lu | Re-entering Power-Down...\r\n", ac0_trigger_count);
     }
 }
 
@@ -193,12 +202,12 @@ void SLPCTRL_Init(void)
 }
 
 /**
- * @brief Configures PB2 as digital input with internal pull-up and falling edge asynchronous interrupt.
+ * @brief Configures PB2 as a pulled-up input; sleep entry arms its interrupt.
  */
 void PB2_Wakeup_Init(void)
 {
     PORTB.DIRCLR   = PIN2_bm;
-    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_FALLING_gc;
+    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
     IO_PB2_SetInterruptHandler(PB2_Wakeup_Callback);
 }
 
@@ -215,12 +224,18 @@ void PB2_Wakeup_Callback(void)
  */
 void MotorStop(void)
 {
+    /* Keep the PLL running until the disable request is synchronized. */
+    if (TCD0.CTRLA & TCD_ENABLE_bm)
+    {
+        while (!(TCD0.STATUS & TCD_ENRDY_bm));
+        TCD0.CTRLA &= ~TCD_ENABLE_bm;
+        while (!(TCD0.STATUS & TCD_ENRDY_bm));
+    }
+
     /* Clear Phase (PA4) and Enable (PA5) to GND */
     PORTA.OUTCLR = MOTOR_PH_PIN_bm | MOTOR_EN_PIN_bm;
     PORTA.DIRSET = MOTOR_PH_PIN_bm | MOTOR_EN_PIN_bm;
 
-    /* Disable TCD0 */
-    TCD0.CTRLA &= ~TCD_ENABLE_bm;
 }
 
 /**
@@ -228,6 +243,15 @@ void MotorStop(void)
  */
 void Peripherals_Disable_For_Sleep(void)
 {
+    /* Prevent button/limit interrupts from waking the CPU during power-down. */
+    PORTC.PIN0CTRL = PORT_ISC_INTDISABLE_gc;
+    PORTC.PIN1CTRL = PORT_ISC_INTDISABLE_gc;
+    PORTC.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
+    PORTC.INTFLAGS = PIN0_bm | PIN1_bm | PIN7_bm;
+    TCB0.INTCTRL = 0;
+    TCB1.INTCTRL = 0;
+    TCB2.INTCTRL = 0;
+
     /* Disconnect Event System channels */
     ac_trig_event_disable();
 
@@ -249,13 +273,9 @@ void Peripherals_Disable_For_Sleep(void)
 
     /* Disable CCL */
     CCL.CTRLA         &= ~CCL_ENABLE_bm;
-    
-     ac_trig_event_disable();//modi 1
-     /* 7. Stop PLL 2X multiplier (ensures 0.0 uA from PLL clock domain) */
-  
+
+    /* Stop the PLL once TCD0 is disabled. */
     ccp_write_io((void *)&(CLKCTRL.PLLCTRLA), 0x00);
-
-
 }
 
 /**
@@ -263,6 +283,22 @@ void Peripherals_Disable_For_Sleep(void)
  */
 void System_Enter_PowerDown_Sleep(void)
 {
+    /* Assert PA2 HIGH before entering sleep (HIGH = Powering down / Sleeping) */
+    SLEEP_OBSERVE_LOW();
+
+    /* Capture PB2 edges throughout shutdown and sleep preparation. */
+    cli();
+    pb2_wakeup_requested = false;
+    PORTB.INTFLAGS = PIN2_bm;
+    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_FALLING_gc;
+    /* A pending button debounce must not restart the motor during shutdown. */
+    PORTC.PIN7CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
+    PORTC.INTFLAGS = PIN7_bm;
+    TCB2.INTCTRL = 0;
+    TCB2.CTRLA &= ~TCB_ENABLE_bm;
+    TCB2.INTFLAGS = TCB_CAPT_bm | TCB_OVF_bm;
+    sei();
+
     /* 1. Safely stop motor drive */
     MotorStop();
 
@@ -275,18 +311,30 @@ void System_Enter_PowerDown_Sleep(void)
     /* 4. Transmit "GOOD NIGHT\r\n" through UART1 on pins PC4 & PC5 */
     Terminal_Enable();
     printf("GOOD NIGHT\r\n");
+    _delay_ms(20);
     Terminal_Disable(); /* Flushes shift register and shuts down UART1 */
 
-    /* 5. Ensure PB2 is armed for asynchronous wake-up */
-    PORTB.DIRCLR   = PIN2_bm;
-    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_FALLING_gc;
-    VPORTB.INTFLAGS = 0xFF; /* Clear any pending PORTB flags */
+    /* Ensure PA2 remains driven HIGH in Power-Down sleep */
+    SLEEP_OBSERVE_LOW();
 
-    /* 6. Enter Power-Down Sleep Mode */
+    /* Atomically check the wake request and enter sleep. */
+    cli();
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-    sleep_mode();
+    while (!pb2_wakeup_requested)
+    {
+        /* SEI guarantees the following SLEEP executes before a pending ISR. */
+        sleep_enable();
+        sei();
+        sleep_cpu();
+        sleep_disable();
+        cli();
+    }
+    PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
+    pb2_wakeup_requested = false;
 
-    /* Execution halts here until an asynchronous interrupt on PB2 wakes the CPU */
+    /* Immediately drive PA2 LOW upon wake-up from sleep (LOW = Awake) */
+    SLEEP_OBSERVE_HIGH();
+    sei();
 }
 
 /**
@@ -294,19 +342,27 @@ void System_Enter_PowerDown_Sleep(void)
  */
 void System_Wakeup_And_Restore(void)
 {
+    /* Ensure PA2 observation pin is LOW while awake */
+    SLEEP_OBSERVE_HIGH();
+
+    /* Discard the previous cycle before enabling any trip sources. */
+    stall_detected = false;
+
     /* 1. Keep onboard Status LED PC6 turned ON while CPU is awake */
     LED_ON();
 
     /* 2. Re-enable USART1 on PC4/PC5 and transmit "GOOD MORNING\r\n" */
-   Terminal_Enable();
+    Terminal_Enable();
     printf("GOOD MORNING\r\n");
 
-    /* 3. Restore Voltage Reference (4.096V) & DAC0 */
+    /* Restore PLL, comparator and its reference before arming protection. */
+    ccp_write_io((void *)&CLKCTRL.PLLCTRLA, CLKCTRL_MULFAC_2x_gc);
     VREF.ACREF = (1 << VREF_ALWAYSON_bp) | VREF_REFSEL_4V096_gc;
     DAC0.CTRLA = 0x01;
+    AC0.DACREF = ac_calculate_trigger_voltage(AC_TRIGGER_VOLTAGE_MV_INIT);
+    /* AC0 stays disabled until its event path is connected. */
 
-    /* 4. Restore Limit switches (PC0/PC1) and SW0 button (PC7) */
-    SW0_Init();
+    /* 4. Restore limit switches (PC0/PC1). */
     Limit_switch();
 
     /* 5. Restore CCL logic Look-Up Tables */
@@ -318,11 +374,17 @@ void System_Wakeup_And_Restore(void)
     TCB1_Debounce_Init();
     TCB2_SW0_Debounce_Init();
 
-    /* 7. Start Motor in DIR_FORWARD with CIP overcurrent protection armed */
     MOTOR_start();
+    SW0_Init();
 
-    /* 8. Clear any latent stall flag */
-    stall_detected = false;
+    /* 7. Reset and log AC0 diagnostic state */
+    ac0_trigger_count = 0;
+    ac0_state_change  = false;
+    uint8_t dacref_reg = AC0.DACREF;
+    uint16_t thresh_mv = (uint16_t)(((uint32_t)dacref_reg * VREF_AC_MV) / 256U);
+    uint8_t init_cmp = (AC0.STATUS & AC_CMPSTATE_bm) ? 1 : 0;
+    printf("[AC0 INIT] Threshold: %u mV (DACREF=0x%02X) | State: %s | PA7 Pin: Live AC0 Output\r\n",
+           thresh_mv, dacref_reg, init_cmp ? "HIGH (Overcurrent)" : "LOW (Normal)");
 }
 
 /* =================================================================================================
@@ -462,6 +524,7 @@ void TCB2_SW0_Debounce_Init(void)
 void SW0_Init(void)
 {
     PORTC.DIRCLR   = PIN7_bm;
+    PORTC.INTFLAGS = PIN7_bm;
     PORTC.PIN7CTRL = PORT_ISC_BOTHEDGES_gc | PORT_PULLUPEN_bm;
 }
 
@@ -469,6 +532,7 @@ void Limit_switch(void)
 {
     /* PC0 and PC1 as active-high limit switch inputs with pull-offs and both-edge interrupts */
     PORTC.DIRCLR   = PIN0_bm | PIN1_bm;
+    PORTC.INTFLAGS = PIN0_bm | PIN1_bm;
     PORTC.PIN0CTRL = PORT_ISC_BOTHEDGES_gc;
     PORTC.PIN1CTRL = PORT_ISC_BOTHEDGES_gc;
 
@@ -532,7 +596,9 @@ uint8_t ac_calculate_trigger_voltage(uint16_t mV)
 
 void ac_trig_event_enable(void)
 {
-    AC0.INTCTRL = AC_INTMODE_NORMAL_POSEDGE_gc | AC_CMP_bm;
+    /* Enable AC0 interrupt on both edges to detect comparator transitions */
+    AC0.STATUS  = AC_CMPIF_bm;
+    AC0.INTCTRL = AC_INTMODE_NORMAL_BOTHEDGE_gc | AC_CMP_bm;
 
     /* Channel 1: Software Event -> resets CCL RS Latch */
     EVSYS.CHANNEL1     = EVSYS_CHANNEL1_OFF_gc;
@@ -542,7 +608,7 @@ void ac_trig_event_enable(void)
     /* Reset timer counters */
     TCB0.CNT      = 0x0000U;
     TCB0.INTFLAGS = TCB_CAPT_bm | TCB_OVF_bm;
-    TCB1.CNT      = (!(VPORTC.IN & (PIN0_bm | PIN1_bm))) ? (TCB1_20MS_DEBOUNCE_COUNTS + 1U) : 0x0000U;
+    TCB1.CNT      = 0x0000U;
     TCB1.INTFLAGS = TCB_CAPT_bm | TCB_OVF_bm;
     TCD0.INTFLAGS = 0xFFU;
 
@@ -580,7 +646,8 @@ void ac_trig_event_enable(void)
 
 void ac_trig_event_disable(void)
 {
-    AC0.INTCTRL          &= ~AC_CMP_bm;
+    AC0.INTCTRL          = 0x00;
+    AC0.STATUS           = AC_CMPIF_bm;
     EVSYS.CHANNEL0        = EVSYS_CHANNEL0_OFF_gc;
     EVSYS.CHANNEL4        = EVSYS_CHANNEL4_OFF_gc;
     EVSYS.CHANNEL5        = EVSYS_CHANNEL5_OFF_gc;
@@ -629,12 +696,13 @@ void MOTOR_start(void)
 {
     ac_trig_event_disable();
     current_direction = DIR_FORWARD;
+    /* Connect the complete fault path before turning on the comparator or motor.
+     * Enabling AC0 afterwards also supplies a start edge if PD2 is already high. */
+    ac_trig_event_enable();
+    AC0.CTRLA = 0xC5U;
+    _delay_us(100); /* Allow the reference and comparator to settle. */
     tcd_enable();
     MotorApplyDirection(current_direction);
-
-    /* Run initial current calibration */
-//    ac_calibration();
-    ac_trig_event_enable();
 }
 
 void FaultReset_And_Restart(void)
@@ -712,7 +780,7 @@ ISR(TCB2_INT_vect)
     TCB2.INTFLAGS = TCB_CAPT_bm | TCB_OVF_bm;
     TCB2.CTRLA   &= ~TCB_ENABLE_bm;
 
-    if (!(VPORTC.IN & PIN7_bm))
+    if (!stall_detected && !(VPORTC.IN & PIN7_bm))
     {
         FaultReset_And_Restart();
     }
@@ -726,10 +794,13 @@ ISR(TCB1_INT_vect)
     
 }
 
-/* AC0 telemetry ISR */
+/* AC0 telemetry ISR: fires on every comparator state transition */
 ISR(AC0_AC_vect)
 {
     AC0.STATUS = AC_CMPIF_bm;
+    ac0_trigger_count++;
+    ac0_last_state = (AC0.STATUS & AC_CMPSTATE_bm) ? 1 : 0;
+    ac0_state_change = true;
 }
 
 /* TCB0 capture ISR: fires when continuous 200 ms stall condition trips */
