@@ -49,7 +49,11 @@ build/default/production/mcc_generated_files/system/src/system.o.d \
  mcc_generated_files/system/src/../../system/interrupt.h \
  mcc_generated_files/system/src/../../system/../system/utils/atomic.h \
  mcc_generated_files/system/src/../../timer/src/slpctrl.h \
- mcc_generated_files/system/src/../../timer/src/../../system/utils/compiler.h
+ mcc_generated_files/system/src/../../timer/src/../../system/utils/compiler.h \
+ mcc_generated_files/system/src/../../../usart0.h \
+ c:\program\ files\microchip\xc8\v3.10\avr\avr\include\stdio.h \
+ mcc_generated_files/system/src/../../../mcc_generated_files/system/utils/compiler.h \
+ mcc_generated_files/system/src/../../../mcc_generated_files/system/clock.h
 
 mcc_generated_files/system/src/../system.h:
 
@@ -148,3 +152,11 @@ mcc_generated_files/system/src/../../system/../system/utils/atomic.h:
 mcc_generated_files/system/src/../../timer/src/slpctrl.h:
 
 mcc_generated_files/system/src/../../timer/src/../../system/utils/compiler.h:
+
+mcc_generated_files/system/src/../../../usart0.h:
+
+c:\program\ files\microchip\xc8\v3.10\avr\avr\include\stdio.h:
+
+mcc_generated_files/system/src/../../../mcc_generated_files/system/utils/compiler.h:
+
+mcc_generated_files/system/src/../../../mcc_generated_files/system/clock.h:

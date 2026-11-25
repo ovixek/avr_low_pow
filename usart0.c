@@ -1,311 +1,212 @@
 /**
- * USART0 Generated Driver API Header File
- * 
- * @file usart0.c
- * 
- * @ingroup usart0
- * 
- * @brief This is the generated driver implementation file for the USART0 driver using the  Universal Synchronous and Asynchronous serial Receiver and Transmitter (USART) module. 
- *
- * @version USART0 Driver Version 2.1.2
-*/
-
-/*
-© [2026] Microchip Technology Inc. and its subsidiaries.
-
-    Subject to your compliance with these terms, you may use Microchip 
-    software and any derivatives exclusively with Microchip products. 
-    You are responsible for complying with 3rd party license terms  
-    applicable to your use of 3rd party software (including open source  
-    software) that may accompany Microchip software. SOFTWARE IS ?AS IS.? 
-    NO WARRANTIES, WHETHER EXPRESS, IMPLIED OR STATUTORY, APPLY TO THIS 
-    SOFTWARE, INCLUDING ANY IMPLIED WARRANTIES OF NON-INFRINGEMENT,  
-    MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT 
-    WILL MICROCHIP BE LIABLE FOR ANY INDIRECT, SPECIAL, PUNITIVE, 
-    INCIDENTAL OR CONSEQUENTIAL LOSS, DAMAGE, COST OR EXPENSE OF ANY 
-    KIND WHATSOEVER RELATED TO THE SOFTWARE, HOWEVER CAUSED, EVEN IF 
-    MICROCHIP HAS BEEN ADVISED OF THE POSSIBILITY OR THE DAMAGES ARE 
-    FORESEEABLE. TO THE FULLEST EXTENT ALLOWED BY LAW, MICROCHIP?S 
-    TOTAL LIABILITY ON ALL CLAIMS RELATED TO THE SOFTWARE WILL NOT 
-    EXCEED AMOUNT OF FEES, IF ANY, YOU PAID DIRECTLY TO MICROCHIP FOR 
-    THIS SOFTWARE.
-*/
-
-/**
-  Section: Included Files
-*/
-#include"usart0.h"
-
-/**
-  Section: Macro Declarations
-*/
-
-
-
-/**
-  Section: Driver Interface
+ * ============================================================================
+ * AVR128DA48 USART1 Serial Communication Driver - usart1.c
+ * ============================================================================
+ * Provides a robust hardware serial driver for USART1 on PA0 (TXD) and PA1 (RXD):
+ *   - 115200 baud, 8 data bits, no parity, 1 stop bit (8N1).
+ *   - Direct hardware register writes to prevent buffer deadlocks.
+ *   - Standard I/O (stdio) stream binding: redirects printf() to USART1 on PA0.
+ * ============================================================================
  */
 
-const uart_drv_interface_t UART0 = {
-    .Initialize = &USART0_Initialize,
-    .Deinitialize = &USART0_Deinitialize,
-    .Read = &USART0_Read,
-    .Write = &USART0_Write,
-    .IsRxReady = &USART0_IsRxReady,
-    .IsTxReady = &USART0_IsTxReady,
-    .IsTxDone = &USART0_IsTxDone,
-    .TransmitEnable = &USART0_TransmitEnable,
-    .TransmitDisable = &USART0_TransmitDisable,
-    .AutoBaudSet = &USART0_AutoBaudSet,
-    .AutoBaudQuery = &USART0_AutoBaudQuery,
-    .BRGCountSet = NULL,
-    .BRGCountGet = NULL,
-    .BaudRateSet = NULL,
-    .BaudRateGet = NULL,
-    .AutoBaudEventEnableGet = NULL,
-    .ErrorGet = &USART0_ErrorGet,
-    .TxCompleteCallbackRegister = NULL,
-    .RxCompleteCallbackRegister = NULL,
-    .TxCollisionCallbackRegister = NULL,
-    .FramingErrorCallbackRegister = &USART0_FramingErrorCallbackRegister,
-    .OverrunErrorCallbackRegister = &USART0_OverrunErrorCallbackRegister,
-    .ParityErrorCallbackRegister = &USART0_ParityErrorCallbackRegister,
-    .EventCallbackRegister = NULL,
-};
+#include "usart0.h"
+
+#if defined(__GNUC__)
 
 /**
-  Section: USART0 variables
-*/
- /* cppcheck-suppress misra-c2012-19.2 */
-static volatile usart0_status_t usart0RxLastError;
+ * Terminal_printCHAR()
+ * Callback used by AVR libc's standard I/O stream system.
+ * Routes characters passed to printf() or puts() directly to the USART1 hardware register.
+ */
+int Terminal_printCHAR(char character, FILE *stream)
+{
+    Terminal_Write((uint8_t)character);
+    return 0;
+}
+
+/*
+ * Set up custom standard I/O stream bound to Terminal_printCHAR.
+ * Initialized with write privileges (_FDEV_SETUP_WRITE).
+ */
+FILE Terminal_stream = FDEV_SETUP_STREAM(Terminal_printCHAR, NULL, _FDEV_SETUP_WRITE);
+
+#elif defined(__ICCAVR__)
 
 /**
-  Section: USART0 APIs
-*/
-static void (*USART0_FramingErrorHandler)(void);
-static void (*USART0_OverrunErrorHandler)(void);
-static void (*USART0_ParityErrorHandler)(void);
-
-static void USART0_DefaultFramingErrorCallback(void);
-static void USART0_DefaultOverrunErrorCallback(void);
-static void USART0_DefaultParityErrorCallback(void);
-
-
-
-/**
-  Section: USART0  APIs
-*/
-
-void USART0_Initialize(void)
+ * putchar()
+ * Standard C library character output hook for IAR compiler.
+ */
+int putchar(int outChar)
 {
-    // Set the USART0 module to the options selected in the user interface.
+    Terminal_Write(outChar);
+    return outChar;
+}
+#endif
 
-    //BAUD 138; 
-    USART0.BAUD = (uint16_t)USART0_BAUD_RATE(115200UL);
-	
-    // ABEIE disabled; DREIE disabled; LBME disabled; RS485 DISABLE; RXCIE disabled; RXSIE disabled; TXCIE disabled; 
-    USART0.CTRLA = 0x0;
-	
-    // MPCM disabled; ODME disabled; RXEN enabled; RXMODE NORMAL; SFDEN disabled; TXEN enabled; 
-    USART0.CTRLB = 0xC0;
-	
-    // CMODE Asynchronous Mode; UCPHA enabled; UDORD disabled; CHSIZE Character size: 8 bit; PMODE No Parity; SBMODE 1 stop bit; 
-    USART0.CTRLC = 0x3;
-	
-    //DBGRUN disabled; 
-    USART0.DBGCTRL = 0x0;
-	
-    //IREI disabled; 
-    USART0.EVCTRL = 0x0;
-	
-    //RXPL 0x0; 
-    USART0.RXPLCTRL = 0x0;
-	
-    //TXPL 0x0; 
-    USART0.TXPLCTRL = 0x0;
-	
-    USART0_FramingErrorCallbackRegister(USART0_DefaultFramingErrorCallback);
-    USART0_OverrunErrorCallbackRegister(USART0_DefaultOverrunErrorCallback);
-    USART0_ParityErrorCallbackRegister(USART0_DefaultParityErrorCallback);
-    usart0RxLastError.status = 0;  
+static volatile bool Terminal_tx_pending = false;
+
+bool Terminal_IsTxReady(void)
+{
+    return (USART1.STATUS & USART_DREIF_bm) ? true : false;
 }
 
-void USART0_Deinitialize(void)
+bool USART1_IsTxReady(void)
 {
-    USART0.BAUD = 0x00;	
-    USART0.CTRLA = 0x00;	
-    USART0.CTRLB = 0x00;	
-    USART0.CTRLC = 0x00;	
-    USART0.DBGCTRL = 0x00;	
-    USART0.EVCTRL = 0x00;	
-    USART0.RXPLCTRL = 0x00;	
-    USART0.TXPLCTRL = 0x00;	
+    return Terminal_IsTxReady();
 }
 
-void USART0_Enable(void)
+bool Terminal_IsRxReady(void)
 {
-    USART0.CTRLB |= USART_RXEN_bm | USART_TXEN_bm; 
+    return (USART1.STATUS & USART_RXCIF_bm) ? true : false;
 }
 
-void USART0_Disable(void)
+bool USART1_IsRxReady(void)
 {
-    USART0.CTRLB &= ~(USART_RXEN_bm | USART_TXEN_bm); 
+    return Terminal_IsRxReady();
 }
 
-void USART0_TransmitEnable(void)
+bool Terminal_IsTxBusy(void)
 {
-    USART0.CTRLB |= USART_TXEN_bm; 
+    return !(USART1.STATUS & USART_TXCIF_bm);
 }
 
-void USART0_TransmitDisable(void)
+bool Terminal_IsTxDone(void)
 {
-    USART0.CTRLB &= ~(USART_TXEN_bm); 
+    return (USART1.STATUS & USART_TXCIF_bm) ? true : false;
 }
 
-void USART0_ReceiveEnable(void)
+bool USART1_IsTxDone(void)
 {
-    USART0.CTRLB |= USART_RXEN_bm ; 
+    return Terminal_IsTxDone();
 }
 
-void USART0_ReceiveDisable(void)
+uint8_t Terminal_Read(void)
 {
-    USART0.CTRLB &= ~(USART_RXEN_bm); 
+    while (!(USART1.STATUS & USART_RXCIF_bm))
+        ;
+    return USART1.RXDATAL;
 }
 
-void USART0_AutoBaudSet(bool enable)
+uint8_t USART1_Read(void)
 {
-    if(enable)
+    return Terminal_Read();
+}
+
+uint8_t Terminal_GetData(void)
+{
+    return USART1.RXDATAL;
+}
+
+void Terminal_Write(const uint8_t data)
+{
+    /* Wait until hardware transmit data register is empty */
+    while (!(USART1.STATUS & USART_DREIF_bm))
+        ;
+    /* Clear Transmit Complete flag before sending */
+    USART1.STATUS = USART_TXCIF_bm;
+    /* Load character into hardware transmit data register */
+    USART1.TXDATAL = data;
+    Terminal_tx_pending = true;
+}
+
+void USART1_Write(const uint8_t data)
+{
+    Terminal_Write(data);
+}
+
+void Terminal_WriteString(const char *str)
+{
+    if (str == NULL) return;
+    while (*str)
     {
-        USART0.CTRLB |= USART_RXMODE_gm & (0x02 << USART_RXMODE_gp); 
-        USART0.STATUS |= USART_WFB_bm ; 
-    }
-    else
-    {
-       USART0.CTRLB &= ~(USART_RXMODE_gm); 
-       USART0.STATUS &= ~(USART_BDF_bm);  
+        Terminal_Write((uint8_t)*str++);
     }
 }
 
-bool USART0_AutoBaudQuery(void)
+void Terminal_Initialize(void)
 {
-     return (bool)(USART0.STATUS & USART_BDF_bm) ; 
+    /* Ensure PORTMUX routes USART1 to default pins: PC4 (TXD) and PC5 (RXD) */
+    PORTMUX.USARTROUTEA = (PORTMUX.USARTROUTEA & ~PORTMUX_USART1_gm) | PORTMUX_USART1_ALT1_gc;
+
+    /* Configure PA0 as TXD output (idle HIGH) and PA1 as RXD input with weak pull-up */
+    PORTC.DIRSET   = PIN4_bm;
+    PORTC.OUTSET   = PIN4_bm;
+    PORTC.PIN0CTRL = 0x00;
+    PORTC.DIRCLR   = PIN5_bm;
+    PORTC.PIN4CTRL = PORT_PULLUPEN_bm;
+
+    /* Set baud rate register for 115200 baud (calculated from 24 MHz F_CPU -> BAUD = 833) */
+    USART1.BAUD = (uint16_t)USART1_BAUD_RATE(115200);
+
+    /* CTRLA: No interrupts enabled for polled transmission */
+    USART1.CTRLA = 0x00;
+
+    /* CTRLB: Enable Transmitter and Receiver in normal speed mode */
+    USART1.CTRLB = USART_RXEN_bm | USART_TXEN_bm;
+
+    /* CTRLC: Asynchronous mode, 8 data bits, no parity, 1 stop bit (8N1) */
+    USART1.CTRLC = USART_CMODE_ASYNCHRONOUS_gc | USART_PMODE_DISABLED_gc | USART_SBMODE_1BIT_gc | USART_CHSIZE_8BIT_gc;
+
+    /* Clear any pending status flags */
+    USART1.STATUS = USART_TXCIF_bm | USART_RXCIF_bm;
+
+    Terminal_tx_pending = false;
+
+#if defined(__GNUC__)
+    /* Redirect standard output stream (stdout) to USART1 terminal driver */
+    stdout = &Terminal_stream;
+#endif
 }
 
-bool USART0_IsAutoBaudDetectError(void)
+void USART1_Initialize(void)
 {
-     return (bool)(USART0.STATUS & USART_ISFIF_bm) ; 
+    Terminal_Initialize();
 }
 
-void USART0_AutoBaudDetectErrorReset(void)
+void Terminal_Enable(void)
 {
-    USART0.STATUS |= USART_ISFIF_bm ;
-	USART0_AutoBaudSet(false);
-    USART0_ReceiveDisable();
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    USART0_ReceiveEnable();
-    USART0_AutoBaudSet(true);
+    USART1.CTRLB |= USART_RXEN_bm | USART_TXEN_bm;
 }
 
-bool USART0_IsRxReady(void)
+void USART1_Enable(void)
 {
-    return (bool)(USART0.STATUS & USART_RXCIF_bm);
+    Terminal_Enable();
 }
 
-bool USART0_IsTxReady(void)
+void Terminal_EnableRx(void)
 {
-    return (bool)(USART0.STATUS & USART_DREIF_bm);
+    USART1.CTRLB |= USART_RXEN_bm;
 }
 
-bool USART0_IsTxDone(void)
+void USART1_ReceiveEnable(void)
 {
-    bool usart0TxCompleteStatus = false;
-    usart0TxCompleteStatus = (bool)(USART0.STATUS & USART_TXCIF_bm);
-    return usart0TxCompleteStatus;
+    Terminal_EnableRx();
 }
 
-size_t USART0_ErrorGet(void)
+void Terminal_EnableTx(void)
 {
-    usart0RxLastError.status = 0;
-    
-    if(USART_FERR_bm == (USART0.RXDATAH & USART_FERR_bm))
+    USART1.CTRLB |= USART_TXEN_bm;
+}
+
+void USART1_TransmitEnable(void)
+{
+    Terminal_EnableTx();
+}
+
+void Terminal_Disable(void)
+{
+    if (Terminal_tx_pending)
     {
-        usart0RxLastError.ferr = 1;
-        if(NULL != USART0_FramingErrorHandler)
-        {
-            USART0_FramingErrorHandler();
-        }  
+        /* Wait for final bit to completely shift out of physical pin PA0 before disabling */
+        while (!(USART1.STATUS & USART_TXCIF_bm))
+            ;
+        USART1.STATUS = USART_TXCIF_bm;
+        Terminal_tx_pending = false;
     }
-    if(USART_PERR_bm == (USART0.RXDATAH & USART_PERR_bm))
-    {
-        usart0RxLastError.perr = 1;
-        if(NULL != USART0_ParityErrorHandler)
-        {
-            USART0_ParityErrorHandler();
-        }  
-    }
-    if(USART_BUFOVF_bm == (USART0.RXDATAH & USART_BUFOVF_bm))
-    {
-        usart0RxLastError.oerr = 1;
-        if(NULL != USART0_OverrunErrorHandler)
-        {
-            USART0_OverrunErrorHandler();
-        }   
-    }
-    return usart0RxLastError.status;
+    USART1.CTRLB &= ~(USART_RXEN_bm | USART_TXEN_bm);
 }
 
-uint8_t USART0_Read(void)
+void USART1_Disable(void)
 {
-    return USART0.RXDATAL;
+    Terminal_Disable();
 }
-
-
-void USART0_Write(uint8_t txData)
-{
-    USART0.TXDATAL = txData;    // Write the data byte to the USART.
-}
-static void USART0_DefaultFramingErrorCallback(void)
-{
-    
-}
-
-static void USART0_DefaultOverrunErrorCallback(void)
-{
-    
-}
-
-static void USART0_DefaultParityErrorCallback(void)
-{
-    
-}
-
-void USART0_FramingErrorCallbackRegister(void (* callbackHandler)(void))
-{
-    if(NULL != callbackHandler)
-    {
-        USART0_FramingErrorHandler = callbackHandler;
-    }
-}
-
-void USART0_OverrunErrorCallbackRegister(void (* callbackHandler)(void))
-{
-    if(NULL != callbackHandler)
-    {
-        USART0_OverrunErrorHandler = callbackHandler;
-    }    
-}
-
-void USART0_ParityErrorCallbackRegister(void (* callbackHandler)(void))
-{
-    if(NULL != callbackHandler)
-    {
-        USART0_ParityErrorHandler = callbackHandler;
-    } 
-}
-
-
-
-

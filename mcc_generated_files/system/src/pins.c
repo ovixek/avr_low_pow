@@ -57,7 +57,7 @@ void PIN_MANAGER_Initialize(void)
     PORT_Pullups_Initialize();
 
     /* 2. Initial Output Latches */
-    PORTA.OUT = 0x00; /* Motor PH (PA4) and EN (PA5) initialized LOW (Motor stopped) */
+    PORTA.OUT = PIN2_bm; /* PA2 = HIGH (Observation pin: starts HIGH before/during sleep) */
     PORTB.OUT = 0x00;
     PORTC.OUT = PIN6_bm | PIN4_bm; /* PC6=1 (LED OFF on active-low board), PC4=1 (UART1 TX idle mark) */
     PORTD.OUT = 0x00;
@@ -65,15 +65,15 @@ void PIN_MANAGER_Initialize(void)
     PORTF.OUT = 0x00;
 
     /* 3. Direction Registers */
-    PORTA.DIR = PIN4_bm | PIN5_bm | PIN7_bm; /* PA4 (PH), PA5 (EN), PA7 (AC0 Out) */
+    PORTA.DIR = PIN2_bm | PIN4_bm | PIN5_bm | PIN7_bm; /* PA2 (Sleep Obs), PA4 (PH), PA5 (EN), PA7 (AC0 Out) */
     PORTB.DIR = 0x00;                        /* PB2 is input */
-    PORTC.DIR = PIN2_bm | PIN3_bm | PIN4_bm | PIN6_bm; /* PC4 TX output; PC5 RX input */
+    PORTC.DIR = PIN4_bm | PIN6_bm;           /* PC4 (USART1 TX) & PC6 (LED) outputs; PC0/PC1 (Limit Switches), PC5 (RX), PC7 inputs */
     PORTD.DIR = 0x8;
     PORTE.DIR = 0xFF;
     PORTF.DIR = 0xFF;
 
     /* 4. PINxCTRL Registers for Active/Specialized Pins */
-    /* PA4 & PA5: Normal digital outputs */
+    PORTA.PIN2CTRL = 0x00; /* PA2: Sleep observation output */
     PORTA.PIN4CTRL = 0x00;
     PORTA.PIN5CTRL = 0x00;
     PORTA.PIN7CTRL = 0x00; /* PA7: AC0 diagnostic output */
@@ -82,13 +82,16 @@ void PIN_MANAGER_Initialize(void)
     PORTB.DIRCLR   = PIN2_bm;
     PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
 
-    /* PC0 & PC1: Limit switches (Pull-down / Pull-off, both-edge sensing handled in Limit_switch()) */
+    /* PC0 & PC1: Limit Switches (Reserved strictly for EVSYS CH2/CH3 & CCL LUT1, disconnected from UART) */
+    PORTC.DIRCLR   = PIN0_bm | PIN1_bm;
     PORTC.PIN0CTRL = PORT_ISC_INTDISABLE_gc;
     PORTC.PIN1CTRL = PORT_ISC_INTDISABLE_gc;
 
-    /* PC4: USART1 TXD, PC5: USART1 RXD */
+    /* PC4: USART1 TXD (Digital Output), PC5: USART1 RXD (Digital Input with internal pull-up) */
+    PORTC.DIRSET   = PIN4_bm;
     PORTC.PIN4CTRL = 0x00;
-    PORTC.PIN5CTRL = 0x00;
+    PORTC.DIRCLR   = PIN5_bm;
+    PORTC.PIN5CTRL = PORT_PULLUPEN_bm;
 
     /* PC6: User LED (Output) */
     PORTC.PIN6CTRL = 0x00;
@@ -108,7 +111,7 @@ void PIN_MANAGER_Initialize(void)
     PORTMUX.TCBROUTEA   = 0x00;
     PORTMUX.TCDROUTEA   = PORTMUX_TCD0_DEFAULT_gc; /* WOB on PA5 */
     PORTMUX.TWIROUTEA   = 0x00;
-    PORTMUX.USARTROUTEA = PORTMUX_USART1_ALT1_gc; /* Route USART1 to PC4 (TXD) and PC5 (RXD) */
+    PORTMUX.USARTROUTEA = PORTMUX_USART0_NONE_gc | PORTMUX_USART1_ALT1_gc; /* Disconnect USART0; Route USART1 to PC4 (TXD) & PC5 (RXD) */
     PORTMUX.USARTROUTEB = 0x00;
     PORTMUX.ZCDROUTEA   = 0x00;
 }

@@ -48,10 +48,11 @@ build/default/debug/main.o.d build/default/debug/main.o: main.c \
  mcc_generated_files/system/../system/../system/utils/atomic.h \
  mcc_generated_files/system/../timer/src/slpctrl.h \
  mcc_generated_files/system/../timer/src/../../system/utils/compiler.h \
- usart1.h c:\program\ files\microchip\xc8\v3.10\avr\avr\include\stdio.h \
- mcc_generated_files/system/utils/compiler.h \
- mcc_generated_files/system/utils/atomic.h \
- mcc_generated_files/system/clock.h \
+ mcc_generated_files/system/../../usart0.h \
+ c:\program\ files\microchip\xc8\v3.10\avr\avr\include\stdio.h \
+ mcc_generated_files/system/../../mcc_generated_files/system/utils/compiler.h \
+ mcc_generated_files/system/../../mcc_generated_files/system/clock.h \
+ usart0.h \
  c:\program\ files\microchip\xc8\v3.10\avr\avr\include\avr\sleep.h \
  c:\program\ files\microchip\xc8\v3.10\avr\avr\include\util\delay.h \
  c:\program\ files\microchip\xc8\v3.10\avr\avr\include\util\delay_basic.h \
@@ -155,15 +156,15 @@ mcc_generated_files/system/../timer/src/slpctrl.h:
 
 mcc_generated_files/system/../timer/src/../../system/utils/compiler.h:
 
-usart1.h:
+mcc_generated_files/system/../../usart0.h:
 
 c:\program\ files\microchip\xc8\v3.10\avr\avr\include\stdio.h:
 
-mcc_generated_files/system/utils/compiler.h:
+mcc_generated_files/system/../../mcc_generated_files/system/utils/compiler.h:
 
-mcc_generated_files/system/utils/atomic.h:
+mcc_generated_files/system/../../mcc_generated_files/system/clock.h:
 
-mcc_generated_files/system/clock.h:
+usart0.h:
 
 c:\program\ files\microchip\xc8\v3.10\avr\avr\include\avr\sleep.h:
 

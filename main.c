@@ -43,7 +43,7 @@
  */
 
 #include "mcc_generated_files/system/system.h"
-#include "usart1.h"
+#include "usart0.h"
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
@@ -83,9 +83,14 @@ typedef enum {
     DIR_REVERSE = 1  /* Toggled state on PC7 press: Hand Close (PA4 = HIGH) */
 } motor_dir_t;
 
-static volatile motor_dir_t current_direction   = DIR_FORWARD;
+static volatile motor_dir_t current_direction    = DIR_FORWARD;
 static volatile bool        pb2_wakeup_requested = false;
 static volatile bool        stall_detected       = false;
+
+/* AC0 real-time trigger telemetry variables */
+static volatile bool        ac0_state_change     = false;
+static volatile uint8_t     ac0_last_state       = 0;
+static volatile uint32_t    ac0_trigger_count    = 0;
 
 /* =================================================================================================
  * FUNCTION PROTOTYPES
@@ -128,6 +133,9 @@ int main(void)
     SYSTEM_Initialize();
     Terminal_Initialize();
 
+    /* Assert PA2 HIGH at startup before entering initial Power-Down sleep */
+    SLEEP_OBSERVE_HIGH();
+
     /* 2. Completely disable BOD and WDT for minimum power consumption */
     BOD_Disable();
     WDT_Disable();
@@ -144,8 +152,22 @@ int main(void)
     {
         System_Enter_PowerDown_Sleep();
         System_Wakeup_And_Restore();
+
         while (!stall_detected)
-            ;
+        {
+            if (ac0_state_change)
+            {
+                ac0_state_change = false;
+                printf("[AC0 EVENT] Triggers: %lu | Live State: %s (PA7=%d)\r\n",
+                       ac0_trigger_count,
+                       ac0_last_state ? "HIGH (Overcurrent)" : "LOW (Normal)",
+                       ac0_last_state);
+                _delay_ms(10); /* Rate limit \ output */
+            }
+        }
+
+        /* Stall or Limit trip occurred: report final AC0 trigger count and status */
+        printf("[STALL/TRIP] Motor Stopped! Total AC0 Triggers: %lu | Re-entering Power-Down...\r\n", ac0_trigger_count);
     }
 }
 
@@ -261,6 +283,9 @@ void Peripherals_Disable_For_Sleep(void)
  */
 void System_Enter_PowerDown_Sleep(void)
 {
+    /* Assert PA2 HIGH before entering sleep (HIGH = Powering down / Sleeping) */
+    SLEEP_OBSERVE_LOW();
+
     /* Capture PB2 edges throughout shutdown and sleep preparation. */
     cli();
     pb2_wakeup_requested = false;
@@ -286,7 +311,11 @@ void System_Enter_PowerDown_Sleep(void)
     /* 4. Transmit "GOOD NIGHT\r\n" through UART1 on pins PC4 & PC5 */
     Terminal_Enable();
     printf("GOOD NIGHT\r\n");
+    _delay_ms(20);
     Terminal_Disable(); /* Flushes shift register and shuts down UART1 */
+
+    /* Ensure PA2 remains driven HIGH in Power-Down sleep */
+    SLEEP_OBSERVE_LOW();
 
     /* Atomically check the wake request and enter sleep. */
     cli();
@@ -302,6 +331,9 @@ void System_Enter_PowerDown_Sleep(void)
     }
     PORTB.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
     pb2_wakeup_requested = false;
+
+    /* Immediately drive PA2 LOW upon wake-up from sleep (LOW = Awake) */
+    SLEEP_OBSERVE_HIGH();
     sei();
 }
 
@@ -310,6 +342,9 @@ void System_Enter_PowerDown_Sleep(void)
  */
 void System_Wakeup_And_Restore(void)
 {
+    /* Ensure PA2 observation pin is LOW while awake */
+    SLEEP_OBSERVE_HIGH();
+
     /* Discard the previous cycle before enabling any trip sources. */
     stall_detected = false;
 
@@ -317,7 +352,7 @@ void System_Wakeup_And_Restore(void)
     LED_ON();
 
     /* 2. Re-enable USART1 on PC4/PC5 and transmit "GOOD MORNING\r\n" */
-   Terminal_Enable();
+    Terminal_Enable();
     printf("GOOD MORNING\r\n");
 
     /* Restore PLL, comparator and its reference before arming protection. */
@@ -341,6 +376,15 @@ void System_Wakeup_And_Restore(void)
 
     MOTOR_start();
     SW0_Init();
+
+    /* 7. Reset and log AC0 diagnostic state */
+    ac0_trigger_count = 0;
+    ac0_state_change  = false;
+    uint8_t dacref_reg = AC0.DACREF;
+    uint16_t thresh_mv = (uint16_t)(((uint32_t)dacref_reg * VREF_AC_MV) / 256U);
+    uint8_t init_cmp = (AC0.STATUS & AC_CMPSTATE_bm) ? 1 : 0;
+    printf("[AC0 INIT] Threshold: %u mV (DACREF=0x%02X) | State: %s | PA7 Pin: Live AC0 Output\r\n",
+           thresh_mv, dacref_reg, init_cmp ? "HIGH (Overcurrent)" : "LOW (Normal)");
 }
 
 /* =================================================================================================
@@ -552,7 +596,9 @@ uint8_t ac_calculate_trigger_voltage(uint16_t mV)
 
 void ac_trig_event_enable(void)
 {
-    AC0.INTCTRL = 0; /* Comparator output is consumed by CCL, not the CPU. */
+    /* Enable AC0 interrupt on both edges to detect comparator transitions */
+    AC0.STATUS  = AC_CMPIF_bm;
+    AC0.INTCTRL = AC_INTMODE_NORMAL_BOTHEDGE_gc | AC_CMP_bm;
 
     /* Channel 1: Software Event -> resets CCL RS Latch */
     EVSYS.CHANNEL1     = EVSYS_CHANNEL1_OFF_gc;
@@ -600,7 +646,8 @@ void ac_trig_event_enable(void)
 
 void ac_trig_event_disable(void)
 {
-    AC0.INTCTRL          &= ~AC_CMP_bm;
+    AC0.INTCTRL          = 0x00;
+    AC0.STATUS           = AC_CMPIF_bm;
     EVSYS.CHANNEL0        = EVSYS_CHANNEL0_OFF_gc;
     EVSYS.CHANNEL4        = EVSYS_CHANNEL4_OFF_gc;
     EVSYS.CHANNEL5        = EVSYS_CHANNEL5_OFF_gc;
@@ -747,10 +794,13 @@ ISR(TCB1_INT_vect)
     
 }
 
-/* AC0 telemetry ISR */
+/* AC0 telemetry ISR: fires on every comparator state transition */
 ISR(AC0_AC_vect)
 {
     AC0.STATUS = AC_CMPIF_bm;
+    ac0_trigger_count++;
+    ac0_last_state = (AC0.STATUS & AC_CMPSTATE_bm) ? 1 : 0;
+    ac0_state_change = true;
 }
 
 /* TCB0 capture ISR: fires when continuous 200 ms stall condition trips */
